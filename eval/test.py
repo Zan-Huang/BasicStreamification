@@ -222,7 +222,7 @@ def main():
 
     ### main loop ###
     for epoch in range(args.start_epoch, args.epochs):
-        train_loss, train_acc = train(train_loader, model, optimizer, epoch)
+        train_loss, train_acc, train_first_output_acc = train(train_loader, model, optimizer, epoch)
         val_loss, val_acc = validate(val_loader, model)
         scheduler.step(epoch)
 
@@ -230,7 +230,7 @@ def main():
         writer_train.add_scalar('global/accuracy', train_acc, epoch)
         writer_val.add_scalar('global/loss', val_loss, epoch)
         writer_val.add_scalar('global/accuracy', val_acc, epoch)
-
+        writer_train.add_scalar('global/first_output_accuracy', train_first_output_acc, epoch)
         # save check_point
         is_best = val_acc > best_acc
         best_acc = max(val_acc, best_acc)
@@ -249,15 +249,28 @@ def main():
 def train(data_loader, model, optimizer, epoch):
     losses = AverageMeter()
     accuracy = AverageMeter()
+    first_output_accuracy = AverageMeter()
     model.train()
     global iteration
 
     for idx, (input_seq, target) in enumerate(data_loader):
         tic = time.time()
+        input_seq = input_seq[0]
+
+        B, C, complete, H, W = input_seq.size()
+        T = 50 # because of 50 frames
+        N = 5 # because of 50 frames
+        input_seq = input_seq.contiguous().reshape(B, C, N, T // N, H, W)
+        input_seq = input_seq.permute(0, 2, 1, 3, 4, 5)
+        
         input_seq = input_seq.to(cuda)
         target = target.to(cuda)
         B = input_seq.size(0)
         output, _ = model(input_seq)
+
+        first_output = output[:, 0, :]
+        first_output_acc = calc_accuracy(first_output, target)
+        first_output_accuracy.update(first_output_acc.item(), B)
 
         # visualize
         if (iteration == 0) or (iteration == args.print_freq):
@@ -301,10 +314,10 @@ def train(data_loader, model, optimizer, epoch):
             
             writer_train.add_scalar('local/loss', losses.val, iteration)
             writer_train.add_scalar('local/accuracy', accuracy.val, iteration)
-
+            writer_train.add_scalar('local/first_output_accuracy', first_output_accuracy.val, iteration)
             iteration += 1
 
-    return losses.local_avg, accuracy.local_avg
+    return losses.local_avg, accuracy.local_avg, first_output_accuracy.local_avg
 
 def validate(data_loader, model):
     losses = AverageMeter()
@@ -397,7 +410,7 @@ def get_data(transform, mode='train'):
     elif args.dataset == 'motion':
         dataset = MovingMNISTMotions(root='',
                                      split='train' if mode == 'train' else 'val',
-                                     transform=transform)
+                                     transform=transform)'
     else:
         raise ValueError('dataset not supported')
 
