@@ -24,13 +24,15 @@ import torchvision.utils as vutils
 
 torch.backends.cudnn.benchmark = True
 
+from dataloaders import HMDBDataset
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--net', default='resnet18', type=str)
 parser.add_argument('--model', default='dpc-rnn', type=str)
 parser.add_argument('--dataset', default='ucf101', type=str)
 parser.add_argument('--seq_len', default=10, type=int, help='number of frames in each video block')
 parser.add_argument('--num_seq', default=10, type=int, help='number of video blocks')
-parser.add_argument('--pred_step', default=4, type=int)
+parser.add_argument('--pred_step', default=2, type=int)
 parser.add_argument('--ds', default=3, type=int, help='frame downsampling rate')
 parser.add_argument('--batch_size', default=4, type=int)
 parser.add_argument('--lr', default=1e-3, type=float, help='learning rate')
@@ -138,7 +140,15 @@ def main():
             ToTensor(),
             Normalize() 
         ])
-
+    elif args.dataset == 'hmdb51':
+        transform = transforms.Compose([
+            #RandomSizedCrop(size=args.img_dim, consistent=True, p=1.0),
+            RandomHorizontalFlip(consistent=True),
+            RandomGray(consistent=False, p=0.5),
+            #ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.25, p=1.0),
+            ToTensor()
+            #Normalize()
+        ])
     train_loader = get_data(transform, 'train')
     val_loader = get_data(transform, 'val')
 
@@ -157,6 +167,9 @@ def main():
     for epoch in range(args.start_epoch, args.epochs):
         train_loss, train_acc, train_accuracy_list = train(train_loader, model, optimizer, epoch)
         val_loss, val_acc, val_accuracy_list = validate(val_loader, model, epoch)
+
+        #if epoch % args.print_freq == 0:
+        #    model.module.backbone.visualize_conv1_filters()
 
         # save curve
         writer_train.add_scalar('global/loss', train_loss, epoch)
@@ -200,6 +213,14 @@ def train(data_loader, model, optimizer, epoch):
 
     for idx, input_seq in enumerate(data_loader):
         tic = time.time()
+        input_seq = input_seq[0] #only for hmdb51
+
+        B, C, complete, H, W = input_seq.size()
+        T = 50 # because of 50 frames
+        N = 5 # because of 50 frames
+        input_seq = input_seq.contiguous().reshape(B, C, N, T // N, H, W)
+        input_seq = input_seq.permute(0, 2, 1, 3, 4, 5)
+
         input_seq = input_seq.to(cuda)
         B = input_seq.size(0)
         [score_, mask_] = model(input_seq)
@@ -261,7 +282,16 @@ def validate(data_loader, model, epoch):
 
     with torch.no_grad():
         for idx, input_seq in tqdm(enumerate(data_loader), total=len(data_loader)):
+            input_seq = input_seq[0] #only for hmdb51
+
+            B, C, complete, H, W = input_seq.size()
+            T = 50 # because of 50 frames
+            N = 5 # because of 50 framess
+            input_seq = input_seq.contiguous().reshape(B, C, N, T // N, H, W)
+            input_seq = input_seq.permute(0, 2, 1, 3, 4, 5)
+
             input_seq = input_seq.to(cuda)
+        
             B = input_seq.size(0)
             [score_, mask_] = model(input_seq)
             del input_seq
@@ -292,19 +322,24 @@ def validate(data_loader, model, epoch):
 def get_data(transform, mode='train'):
     print('Loading data for "%s" ...' % mode)
     if args.dataset == 'k400':
-        use_big_K400 = args.img_dim > 140
+        print("bruh")
+        """use_big_K400 = args.img_dim > 140
         dataset = Kinetics400_full_3d(mode=mode,
                               transform=transform,
                               seq_len=args.seq_len,
                               num_seq=args.num_seq,
                               downsample=5,
-                              big=use_big_K400)
+                              big=use_big_K400)"""
     elif args.dataset == 'mnist':
         dataset = MovingMNIST(root="/home/zanh/DualStreamModel/DPC/dpc",
                               split=mode,
                               train_ratio=0.8,
                               val_ratio=0.2,
                               transform=transform)
+    elif args.dataset == 'hmdb51':
+        image_dir = '/home/zanh/DualStreamModel/DPC/data/jpeg_dir'
+        label_file = '/home/zanh/DualStreamModel/DPC/data/out_dir/hmdb51_{mode}.txt'.format(mode=mode)
+        dataset = HMDBDataset(image_dir, label_file, split=mode, clip_len=50)
     else:
         raise ValueError('dataset not supported')
 
