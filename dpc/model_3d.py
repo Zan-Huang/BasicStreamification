@@ -13,7 +13,7 @@ from convrnn import ConvGRU
 
 class DPC_RNN(nn.Module):
     '''DPC with RNN'''
-    def __init__(self, sample_size, num_seq=10, seq_len=10, pred_step=4, network='resnet50'):
+    def __init__(self, sample_size, num_seq=5, seq_len=10, pred_step=2, network='resnet50'):
         super(DPC_RNN, self).__init__()
         torch.cuda.manual_seed(233)
         print('Using DPC-RNN model')
@@ -50,31 +50,8 @@ class DPC_RNN(nn.Module):
 
         # compute covariance here
 
-        block = block.view(B*N, C, SL, H, W)
+        block = block.contiguous().reshape(B*N, C, SL, H, W)
         feature = self.backbone(block)
-
-        #C_feat = feature.size(1)  # Get number of feature channels
-        #C_half = C_feat // 2
-        
-        #feature_first_half = feature[:, :C_half, ...]
-        #feature_second_half = feature[:, C_half:, ...]
-        
-        #z_a = feature_first_half.reshape(B*N, C_half, -1)
-        #z_b = feature_second_half.reshape(B*N, C_half, -1)
-        
-        #z_a_mean = torch.mean(z_a, dim=2, keepdim=True)
-        #z_b_mean = torch.mean(z_b, dim=2, keepdim=True)
-        
-        #z_a_centered = z_a - z_a_mean
-        #z_b_centered = z_b - z_b_mean
-        
-        #n = z_a.shape[2]
-        #covariance = torch.bmm(z_a_centered, z_b_centered.transpose(1, 2)) / (n - 1)
-        
-        #d = covariance.size(1)
-        #covariance_loss = torch.sum(covariance ** 2) / d
-
-        #print(covariance_loss.shape)
 
         del block
         feature = F.avg_pool3d(feature, (self.last_duration, 1, 1), stride=(1, 1, 1))
