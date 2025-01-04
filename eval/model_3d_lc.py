@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 class LC(nn.Module):
     def __init__(self, sample_size, num_seq, seq_len, 
-                 network='resnet9', dropout=0.5, num_class=101):
+                 network='resnet9', dropout=0.5, num_class=51):
         super(LC, self).__init__()
         torch.cuda.manual_seed(666)
         self.sample_size = sample_size

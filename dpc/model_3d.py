@@ -99,7 +99,15 @@ class DPC_RNN(nn.Module):
             mask = tmp.view(B, self.last_size**2, self.pred_step, B, self.last_size**2, N).permute(0,2,1,3,5,4)
             self.mask = mask
 
-        return [score, self.mask]
+            ### VICReg Variance Loss ###
+            feature_flat = feature.view(B, -1)
+            std_dev = torch.sqrt(torch.var(feature_flat, dim=0, unbiased=False) + 1e-4)
+            vicreg_variance_loss = F.relu(1 - std_dev).mean()
+            vicreg_variance_loss *= 1.0 / feature_flat.size(1)
+
+            #print("VIC_variance_shape: ", vicreg_variance_loss.shape)
+
+        return [score, self.mask, vicreg_variance_loss]
 
     def _initialize_weights(self, module):
         for name, param in module.named_parameters():

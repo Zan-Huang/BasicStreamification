@@ -21,7 +21,7 @@ def select_resnet(network, track_running_stats=True,):
         param['feature_size'] = 256
     elif network == 'basictwostream':
         model = resnet18_2d3d_two_stream(track_running_stats=track_running_stats)
-        param['feature_size'] = 256
+        param['feature_size'] = 512
     else: raise IOError('model type is wrong')
 
     return model, param

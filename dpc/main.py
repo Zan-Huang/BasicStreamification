@@ -24,7 +24,7 @@ import torchvision.utils as vutils
 
 torch.backends.cudnn.benchmark = True
 
-from dataloaders import HMDBDataset
+from dataloaders import HMDBDataset, CharadesRGBDataset
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--net', default='resnet18', type=str)
@@ -146,8 +146,16 @@ def main():
             RandomHorizontalFlip(consistent=True),
             RandomGray(consistent=False, p=0.5),
             #ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.25, p=1.0),
-            ToTensor()
-            #Normalize()
+            ToTensor(),
+            Normalize()
+        ])
+    elif args.dataset == 'charades_ego':
+        transform = transforms.Compose([
+            RandomHorizontalFlip(consistent=True),
+            ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.25, p=1.0),
+            CenterCrop(112),
+            ToTensor(),
+            Normalize()
         ])
     train_loader = get_data(transform, 'train')
     val_loader = get_data(transform, 'val')
@@ -215,15 +223,14 @@ def train(data_loader, model, optimizer, epoch):
         tic = time.time()
         input_seq = input_seq[0] #only for hmdb51
 
-        B, C, complete, H, W = input_seq.size()
-        T = 50 # because of 50 frames
-        N = 5 # because of 50 frames
-        input_seq = input_seq.contiguous().reshape(B, C, N, T // N, H, W)
-        input_seq = input_seq.permute(0, 2, 1, 3, 4, 5)
+        B, T, C, H, W = input_seq.size()
+        N = 5
+        input_seq = input_seq.contiguous().view(B, N, T // N, C, H, W)
+        input_seq = input_seq.permute(0, 1, 3, 2, 4, 5)
 
         input_seq = input_seq.to(cuda)
         B = input_seq.size(0)
-        [score_, mask_] = model(input_seq)
+        [score_, mask_, vicreg_variance_loss] = model(input_seq)
         # visualize
         if (iteration == 0) or (iteration == args.print_freq):
             if B > 2: input_seq = input_seq[0:2,:]
@@ -242,7 +249,8 @@ def train(data_loader, model, optimizer, epoch):
         target_flattened = target_.view(B*NP*SQ, B2*NS*SQ).to(cuda)
         target_flattened = target_flattened.to(int).argmax(dim=1)
 
-        loss = criterion(score_flattened, target_flattened)
+        print(vicreg_variance_loss.mean())
+        loss = criterion(score_flattened, target_flattened) + 1e5 * vicreg_variance_loss.mean()
         top1, top3, top5 = calc_topk_accuracy(score_flattened, target_flattened, (1,3,5))
 
         accuracy_list[0].update(top1.item(),  B)
@@ -284,16 +292,15 @@ def validate(data_loader, model, epoch):
         for idx, input_seq in tqdm(enumerate(data_loader), total=len(data_loader)):
             input_seq = input_seq[0] #only for hmdb51
 
-            B, C, complete, H, W = input_seq.size()
-            T = 50 # because of 50 frames
-            N = 5 # because of 50 framess
-            input_seq = input_seq.contiguous().reshape(B, C, N, T // N, H, W)
-            input_seq = input_seq.permute(0, 2, 1, 3, 4, 5)
+            B, T, C, H, W = input_seq.size()
+            N = 5
+            input_seq = input_seq.contiguous().view(B, N, T // N, C, H, W)
+            input_seq = input_seq.permute(0, 1, 3, 2, 4, 5)
 
             input_seq = input_seq.to(cuda)
         
             B = input_seq.size(0)
-            [score_, mask_] = model(input_seq)
+            [score_, mask_, vicreg_variance_loss] = model(input_seq)
             del input_seq
 
             if idx == 0: target_, (_, B2, NS, NP, SQ) = process_output(mask_)
@@ -303,7 +310,8 @@ def validate(data_loader, model, epoch):
             target_flattened = target_.view(B*NP*SQ, B2*NS*SQ).to(cuda)
             target_flattened = target_flattened.to(int).argmax(dim=1)
 
-            loss = criterion(score_flattened, target_flattened)
+            print(vicreg_variance_loss.mean())
+            loss = criterion(score_flattened, target_flattened) + 1e5 * vicreg_variance_loss.mean()
             top1, top3, top5 = calc_topk_accuracy(score_flattened, target_flattened, (1,3,5))
 
             losses.update(loss.item(), B)
@@ -340,6 +348,14 @@ def get_data(transform, mode='train'):
         image_dir = '/home/zanh/DualStreamModel/DPC/data/jpeg_dir'
         label_file = '/home/zanh/DualStreamModel/DPC/data/out_dir/hmdb51_{mode}.txt'.format(mode=mode)
         dataset = HMDBDataset(image_dir, label_file, split=mode, clip_len=50)
+    elif args.dataset == 'charades_ego':
+        dataset = CharadesRGBDataset(
+            root_dir="/home/zanh/DualStreamModel/DPC/data/ego_centric/CharadesEgo_v1_rgb",
+            transform=transform,
+            clip_len=50,
+            split=mode,
+            fps=24,
+        )
     else:
         raise ValueError('dataset not supported')
 

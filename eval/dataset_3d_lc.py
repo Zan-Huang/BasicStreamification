@@ -16,8 +16,8 @@ from augmentation import *
 from tqdm import tqdm
 from joblib import Parallel, delayed
 
-from torch_moving_mnist.data import MovingMNIST
-from torch_moving_mnist.utils import show_images
+#from torch_moving_mnist.data import MovingMNIST
+#from torch_moving_mnist.utils import show_images
 
 def pil_loader(path):
     with open(path, 'rb') as f:
