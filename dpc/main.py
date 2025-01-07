@@ -24,7 +24,7 @@ import torchvision.utils as vutils
 
 torch.backends.cudnn.benchmark = True
 
-from dataloaders import HMDBDataset, CharadesRGBDataset
+from dataloaders import HMDBDataset
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--net', default='resnet18', type=str)
@@ -149,11 +149,11 @@ def main():
             ToTensor(),
             Normalize()
         ])
-    elif args.dataset == 'charades_ego':
+
+    elif args.dataset == 'charades':
         transform = transforms.Compose([
-            RandomHorizontalFlip(consistent=True),
-            ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.25, p=1.0),
-            CenterCrop(112),
+            #RandomHorizontalFlip(consistent=True),
+            #ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.25, p=1.0),
             ToTensor(),
             Normalize()
         ])
@@ -221,12 +221,10 @@ def train(data_loader, model, optimizer, epoch):
 
     for idx, input_seq in enumerate(data_loader):
         tic = time.time()
-        input_seq = input_seq[0] #only for hmdb51
+        input_seq = input_seq#[0]
 
-        B, T, C, H, W = input_seq.size()
-        N = 5
-        input_seq = input_seq.contiguous().view(B, N, T // N, C, H, W)
         input_seq = input_seq.permute(0, 1, 3, 2, 4, 5)
+        #print(f"Input sequence shape: {input_seq.shape}")
 
         input_seq = input_seq.to(cuda)
         B = input_seq.size(0)
@@ -249,7 +247,7 @@ def train(data_loader, model, optimizer, epoch):
         target_flattened = target_.view(B*NP*SQ, B2*NS*SQ).to(cuda)
         target_flattened = target_flattened.to(int).argmax(dim=1)
 
-        print(vicreg_variance_loss.mean())
+        #print(vicreg_variance_loss.mean())
         loss = criterion(score_flattened, target_flattened) + 1e5 * vicreg_variance_loss.mean()
         top1, top3, top5 = calc_topk_accuracy(score_flattened, target_flattened, (1,3,5))
 
@@ -271,10 +269,12 @@ def train(data_loader, model, optimizer, epoch):
         if idx % args.print_freq == 0:
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Loss {loss.val:.6f} ({loss.local_avg:.4f})\t'
+                  'VicReg Variance Loss {vic_loss:.6f}\t'
                   'Acc: top1 {3:.4f}; top3 {4:.4f}; top5 {5:.4f} T:{6:.2f}\t'.format(
-                   epoch, idx, len(data_loader), top1, top3, top5, time.time()-tic, loss=losses))
+                   epoch, idx, len(data_loader), top1, top3, top5, time.time()-tic, vic_loss=vicreg_variance_loss.mean().item(), loss=losses))
 
             writer_train.add_scalar('local/loss', losses.val, iteration)
+            writer_train.add_scalar('local/vicreg_variance_loss', vicreg_variance_loss.mean().item(), iteration)
             writer_train.add_scalar('local/accuracy', accuracy.val, iteration)
 
             iteration += 1
@@ -290,13 +290,9 @@ def validate(data_loader, model, epoch):
 
     with torch.no_grad():
         for idx, input_seq in tqdm(enumerate(data_loader), total=len(data_loader)):
-            input_seq = input_seq[0] #only for hmdb51
+            input_seq = input_seq #only for hmdb51
 
-            B, T, C, H, W = input_seq.size()
-            N = 5
-            input_seq = input_seq.contiguous().view(B, N, T // N, C, H, W)
             input_seq = input_seq.permute(0, 1, 3, 2, 4, 5)
-
             input_seq = input_seq.to(cuda)
         
             B = input_seq.size(0)
@@ -310,7 +306,7 @@ def validate(data_loader, model, epoch):
             target_flattened = target_.view(B*NP*SQ, B2*NS*SQ).to(cuda)
             target_flattened = target_flattened.to(int).argmax(dim=1)
 
-            print(vicreg_variance_loss.mean())
+            
             loss = criterion(score_flattened, target_flattened) + 1e5 * vicreg_variance_loss.mean()
             top1, top3, top5 = calc_topk_accuracy(score_flattened, target_flattened, (1,3,5))
 
@@ -322,8 +318,10 @@ def validate(data_loader, model, epoch):
             accuracy_list[2].update(top5.item(), B)
 
     print('[{0}/{1}] Loss {loss.local_avg:.4f}\t'
+          'VicReg Variance Loss {vic_loss:.6f}\t'
           'Acc: top1 {2:.4f}; top3 {3:.4f}; top5 {4:.4f} \t'.format(
-           epoch, args.epochs, *[i.avg for i in accuracy_list], loss=losses))
+           epoch, args.epochs, *[i.avg for i in accuracy_list], 
+           loss=losses, vic_loss=vicreg_variance_loss.mean().item()))
     return losses.local_avg, accuracy.local_avg, [i.local_avg for i in accuracy_list]
 
 
@@ -348,14 +346,12 @@ def get_data(transform, mode='train'):
         image_dir = '/home/zanh/DualStreamModel/DPC/data/jpeg_dir'
         label_file = '/home/zanh/DualStreamModel/DPC/data/out_dir/hmdb51_{mode}.txt'.format(mode=mode)
         dataset = HMDBDataset(image_dir, label_file, split=mode, clip_len=50)
-    elif args.dataset == 'charades_ego':
-        dataset = CharadesRGBDataset(
-            root_dir="/home/zanh/DualStreamModel/DPC/data/ego_centric/CharadesEgo_v1_rgb",
-            transform=transform,
-            clip_len=50,
-            split=mode,
-            fps=24,
-        )
+    elif args.dataset == 'charades':
+        dataset = CharadesEGODataset(root_dir='/home/zanh/DualStreamModel/DPC/data/CharadesEgo/CharadesEgo_v1_480', 
+                                     train_annotations_file='/home/zanh/DualStreamModel/DPC/data/CharadesEgo/CharadesEgo_v1_train_only1st.csv',
+                                     val_annotations_file='/home/zanh/DualStreamModel/DPC/data/CharadesEgo/CharadesEgo_v1_test_only1st.csv',
+                                     split=mode, 
+                                     transform=transform)
     else:
         raise ValueError('dataset not supported')
 
